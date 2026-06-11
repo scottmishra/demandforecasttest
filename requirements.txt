@@ -4,3 +4,4 @@ scikit-learn>=1.3
 xgboost>=2.0
 streamlit>=1.30
 plotly>=5.18
+kaleido==0.2.1  # only needed for scripts/render_figures.py (static PNG export)
