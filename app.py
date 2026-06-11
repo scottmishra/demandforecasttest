@@ -73,8 +73,9 @@ st.markdown(
     "smoothing). The grain is the SKU itself — there is no BOM to roll up."
 )
 
-tab_data, tab_class, tab_route, tab_verdict = st.tabs(
-    ["1 · Demand panel", "2 · Classify", "3 · Route a SKU", "4 · Verdict"]
+tab_data, tab_dist, tab_class, tab_route, tab_verdict = st.tabs(
+    ["1 · Demand panel", "2 · Distributions", "3 · Classify",
+     "4 · Route a SKU", "5 · Verdict"]
 )
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +115,97 @@ with tab_data:
         st.plotly_chart(f, use_container_width=True)
 
 # --------------------------------------------------------------------------- #
-# Tab 2 — classification plane
+# Tab 2 — per-SKU demand distributions
+# --------------------------------------------------------------------------- #
+with tab_dist:
+    st.subheader("Demand distribution of each generated SKU")
+    st.markdown(
+        "Every SKU is a draw from its own latent process: a **Bernoulli arrival** "
+        "(controls how often demand occurs) and a **gamma spike size** (controls "
+        "how big and how variable). These are the distributions the forecasters "
+        "have to recover — note the spike at zero that defines intermittent demand."
+    )
+
+    mode = st.radio("View", ["Single SKU", "Grid by quadrant"], horizontal=True)
+
+    if mode == "Single SKU":
+        qf = st.selectbox("Filter by quadrant", ["(any)"] + list(QUAD_COLORS),
+                          key="dist_qf")
+        pool = classes if qf == "(any)" else classes[classes["quadrant"] == qf]
+        if len(pool) == 0:
+            st.info("No SKUs in that quadrant for this configuration.")
+        else:
+            sku = st.selectbox("SKU", list(pool.index), key="dist_sku")
+            series = wide.loc[sku].values
+            nz = series[series > 0]
+            attrs = skus.set_index("sku").loc[sku]
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Quadrant", classes.loc[sku, "quadrant"])
+            c2.metric("Zero weeks", f"{100*(series == 0).mean():.0f}%")
+            c3.metric("Mean spike", f"{nz.mean():.1f}" if nz.size else "—")
+            c4.metric("Max", f"{series.max():.0f}")
+            c5.metric("Events", int((series > 0).sum()))
+
+            d1, d2 = st.columns(2)
+            with d1:
+                fig = px.histogram(x=series, nbins=30,
+                                   color_discrete_sequence=[QUAD_COLORS[classes.loc[sku, "quadrant"]]])
+                fig.update_layout(height=320, bargap=0.05,
+                                  title="All weekly demand (incl. zeros)",
+                                  xaxis_title="units / week", yaxis_title="weeks")
+                st.plotly_chart(fig, use_container_width=True)
+            with d2:
+                if nz.size:
+                    fig = px.histogram(x=nz, nbins=20,
+                                       color_discrete_sequence=["#555"])
+                    fig.update_layout(height=320, bargap=0.05,
+                                      title="Nonzero spike sizes only",
+                                      xaxis_title="units / event", yaxis_title="events")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("This SKU has no demand events in the window.")
+            st.caption(
+                f"Attributes — equipment: `{attrs['equipment_type']}`, family: "
+                f"`{attrs['product_family']}`, branch: `{attrs['branch']}`, "
+                f"price: ${attrs['unit_price']:.2f}"
+                + ("  ·  ⚠️ obsolescent" if attrs["is_obsolete"] else "")
+                + ("  ·  🆕 cold-start" if attrs["is_coldstart"] else "")
+            )
+    else:
+        quad = st.selectbox("Quadrant", ["smooth", "erratic", "intermittent", "lumpy"],
+                            index=2, key="dist_grid_q")
+        members = list(classes.index[classes["quadrant"] == quad])
+        n_show = st.slider("How many SKUs", 6, min(48, max(6, len(members))),
+                           min(24, len(members)), step=6) if len(members) > 6 else len(members)
+        members = members[:n_show]
+        st.caption(f"Showing {len(members)} of "
+                   f"{(classes['quadrant'] == quad).sum()} {quad} SKUs — "
+                   "each panel is one SKU's distribution of nonzero spike sizes.")
+        ncols = 4
+        long_rows = []
+        for sku in members:
+            nz = wide.loc[sku].values
+            nz = nz[nz > 0]
+            for v in nz:
+                long_rows.append({"sku": sku, "size": v})
+        if long_rows:
+            grid_df = pd.DataFrame(long_rows)
+            fig = px.histogram(grid_df, x="size", facet_col="sku", facet_col_wrap=ncols,
+                               nbins=15, color_discrete_sequence=[QUAD_COLORS[quad]],
+                               height=140 * int(np.ceil(len(members) / ncols)))
+            fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1],
+                                                       font_size=9))
+            fig.update_layout(bargap=0.05, showlegend=False,
+                              margin=dict(l=10, r=10, t=24, b=10))
+            fig.update_xaxes(matches=None, showticklabels=True, title_text="")
+            fig.update_yaxes(matches=None, showticklabels=False, title_text="")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No demand events to show for this quadrant.")
+
+# --------------------------------------------------------------------------- #
+# Tab 3 — classification plane
 # --------------------------------------------------------------------------- #
 with tab_class:
     st.subheader("The Syntetos-Boylan plane")
@@ -144,7 +235,7 @@ with tab_class:
     ))
 
 # --------------------------------------------------------------------------- #
-# Tab 3 — route a single SKU
+# Tab 4 — route a single SKU
 # --------------------------------------------------------------------------- #
 with tab_route:
     st.subheader("Pick a SKU and watch the playbook decide")
@@ -194,18 +285,30 @@ with tab_route:
                      use_container_width=True, hide_index=True)
 
 # --------------------------------------------------------------------------- #
-# Tab 4 — verdict
+# Tab 5 — verdict
 # --------------------------------------------------------------------------- #
 with tab_verdict:
     st.subheader("Overall leaderboard")
     st.caption("Lower is better. WMAPE = Σ|actual−forecast| / Σ actual over the "
                "held-out weeks; Bias% > 0 means over-forecasting.")
-    show = overall.copy()
-    show = show.sort_values("wmape")
+    show = overall.copy().sort_values("wmape")
+
+    def _wmape_shade(col: pd.Series) -> list[str]:
+        # Matplotlib-free green->red gradient: best WMAPE green, worst red.
+        lo, hi = col.min(), col.max()
+        rng = (hi - lo) or 1.0
+        out = []
+        for v in col:
+            t = (v - lo) / rng  # 0 best .. 1 worst
+            r = int(120 + 135 * t)
+            g = int(200 - 120 * t)
+            out.append(f"background-color: rgba({r}, {g}, 90, 0.45)")
+        return out
+
     st.dataframe(
         show.style.format({"wmape": "{:.3f}", "mase": "{:.3f}", "rmsse": "{:.3f}",
                            "bias_pct": "{:+.3f}"})
-        .background_gradient(subset=["wmape"], cmap="RdYlGn_r"),
+        .apply(_wmape_shade, subset=["wmape"]),
         use_container_width=True, hide_index=True,
     )
 
