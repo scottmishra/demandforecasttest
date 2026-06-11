@@ -17,4 +17,5 @@ __all__ = [
     "classification",
     "backtest",
     "routing",
+    "inventory",
 ]

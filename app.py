@@ -20,50 +20,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from forecastlab import synth, backtest, classification, routing
+from forecastlab import classification, routing
+from app_common import QUAD_COLORS, sidebar_controls, load
 
 st.set_page_config(page_title="Intermittent Demand Lab", layout="wide")
 
-QUAD_COLORS = {
-    "smooth": "#2ca02c",
-    "erratic": "#ff7f0e",
-    "intermittent": "#1f77b4",
-    "lumpy": "#d62728",
-    "no_demand": "#7f7f7f",
-}
+n_skus, n_weeks, horizon, seed = sidebar_controls()
+ctx = load(n_skus, n_weeks, horizon, seed)
+demand, skus, wide = ctx["demand"], ctx["skus"], ctx["wide"]
+train_weeks, results = ctx["train_weeks"], ctx["results"]
+classes, overall = ctx["classes"], ctx["overall"]
 
-
-# --------------------------------------------------------------------------- #
-# Cached compute
-# --------------------------------------------------------------------------- #
-@st.cache_resource(show_spinner="Generating panel and fitting models…")
-def compute(n_skus: int, n_weeks: int, horizon: int, seed: int):
-    cfg = synth.SynthConfig(n_skus=n_skus, n_weeks=n_weeks, seed=seed)
-    demand, skus = synth.generate_panel(cfg)
-    wide = synth.to_wide(demand)
-    train_weeks = n_weeks - horizon
-    results = backtest.run_backtest(wide, skus, train_weeks, horizon)
-    return demand, skus, wide, train_weeks, results
-
-
-# --------------------------------------------------------------------------- #
-# Sidebar controls
-# --------------------------------------------------------------------------- #
-st.sidebar.title("⚙️ Experiment")
-n_skus = st.sidebar.slider("SKUs", 100, 600, 320, step=20)
-n_weeks = st.sidebar.slider("Weeks of history", 104, 208, 156, step=4)
-horizon = st.sidebar.slider("Forecast horizon (weeks)", 4, 26, 13, step=1)
-seed = st.sidebar.number_input("Random seed", value=7, step=1)
-st.sidebar.caption(
-    "All data is synthetic. The generator reproduces MRO structure — zeros, "
-    "spikes, obsolescence, cold-start, and cross-SKU attribute signal — but "
-    "does **not** use a Tweedie likelihood, so the Tweedie objective has to "
-    "earn its win."
-)
-
-demand, skus, wide, train_weeks, results = compute(n_skus, n_weeks, horizon, int(seed))
-classes = results["classes"]
-overall = results["overall"]
+st.caption("📖 New: open **Inventory story** in the sidebar for the scrollable "
+           "forecast-to-purchasing narrative. This page is the interactive review.")
 
 st.title("Intermittent-Demand Forecasting — does global Tweedie win?")
 st.markdown(
